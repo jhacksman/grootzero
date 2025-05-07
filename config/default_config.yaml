@@ -1,0 +1,29 @@
+
+simulation:
+  environment_path: "default_environment"
+  physics_dt: 0.01
+  render_enabled: true
+  max_steps: 1000
+  domain_randomization:
+    enabled: true
+    gravity_range: [-10.0, -9.8]
+    friction_range: [0.5, 1.0]
+    mass_range_factor: [0.8, 1.2]
+
+learning:
+  reward_type: "binary"
+  history_size: 100
+  selection_strategy: "performance_weighted"
+  learning_rate: 0.001
+
+groot_n1:
+  api_type: "mock"
+  mock_enabled: true
+  temperature: 0.7
+  max_tokens: 2048
+  task_generation:
+    prompt_template: "default_task_prompt"
+    validation_enabled: true
+  controller_generation:
+    prompt_template: "default_controller_prompt"
+    validation_enabled: true
