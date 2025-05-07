@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grootzero"
+version = "0.1.0"
+description = "Autonomous Sim2Real Robotics Pipeline integrating AZR concepts with NVIDIA Isaac Sim and GR00T N1"
+readme = "README.md"
+authors = [
+    {name = "GROOTZERO Team"}
+]
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.dependencies]
+pyyaml = "^6.0"
+pytest = "^7.0.0"
+numpy = "^1.22.0"
+matplotlib = "^3.5.0"
+
+[tool.setuptools]
+packages = ["grootzero"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
