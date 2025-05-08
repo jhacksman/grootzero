@@ -7,6 +7,7 @@ development and testing purposes.
 
 import random
 import uuid
+import math
 from typing import Dict, Any, List, Optional, Tuple
 
 from grootzero.groot_n1.interface import GR00TN1Interface
@@ -27,7 +28,8 @@ class MockGR00TN1(GR00TN1Interface):
                 predefined_tasks: Optional[List[Dict[str, Any]]] = None,
                 predefined_controllers: Optional[List[str]] = None,
                 task_selection_mode: str = "sequential",
-                controller_selection_mode: str = "sequential"):
+                controller_selection_mode: str = "sequential",
+                learning_rate: float = 0.1):
         """
         Initialize the MockGR00TN1 instance.
         
@@ -37,11 +39,13 @@ class MockGR00TN1(GR00TN1Interface):
             predefined_controllers: List of predefined controller code strings
             task_selection_mode: Mode for selecting tasks ('sequential', 'random', or 'difficulty')
             controller_selection_mode: Mode for selecting controllers ('sequential', 'random', or 'match_task')
+            learning_rate: Rate at which to adjust probabilities based on rewards (0.0 to 1.0)
         """
         self.logger = get_logger("MockGR00TN1")
         self.config = config or {}
         self.task_selection_mode = task_selection_mode
         self.controller_selection_mode = controller_selection_mode
+        self.learning_rate = learning_rate
         
         self.predefined_tasks = predefined_tasks or self._get_default_tasks()
         
@@ -51,6 +55,11 @@ class MockGR00TN1(GR00TN1Interface):
         self.controller_counter = 0
         
         self.learning_history = []
+        
+        # Initialize data structures for RL feedback
+        self.controller_performance = {}  # Maps controller index to performance metrics
+        self.controller_selection_weights = [1.0] * len(self.predefined_controllers)  # Equal weights initially
+        self.task_type_controller_map = {}  # Maps task types to successful controllers
         
         self.logger.info(f"Initialized MockGR00TN1 with {len(self.predefined_tasks)} tasks and "
                         f"{len(self.predefined_controllers)} controllers")
@@ -233,30 +242,70 @@ class MockGR00TN1(GR00TN1Interface):
         if not self.predefined_controllers:
             raise ValueError("No predefined controllers available")
         
+        controller_index, controller = self._get_controller_by_selection_mode(task_parameters)
+        
+        task_id = task_parameters.get("task_id", "unknown_task")
+        if not hasattr(self, "_last_selected_controller"):
+            self._last_selected_controller = {}
+        self._last_selected_controller[task_id] = controller_index
+        
+        return controller
+    
+    def _get_controller_by_selection_mode(self, task_parameters: Dict[str, Any]) -> Tuple[int, str]:
+        """
+        Get a controller based on the selection mode and task parameters.
+        
+        Args:
+            task_parameters: Dictionary containing task parameters
+        
+        Returns:
+            Tuple of (controller_index, controller_code)
+        """
         if self.controller_selection_mode == "sequential":
-            controller = self.predefined_controllers[self.controller_counter % len(self.predefined_controllers)]
+            controller_index = self.controller_counter % len(self.predefined_controllers)
+            controller = self.predefined_controllers[controller_index]
             self.controller_counter += 1
         
         elif self.controller_selection_mode == "random":
-            controller = random.choice(self.predefined_controllers)
+            # Use weighted random selection based on controller performance
+            if sum(self.controller_selection_weights) > 0:
+                probabilities = [w / sum(self.controller_selection_weights) for w in self.controller_selection_weights]
+                controller_index = random.choices(
+                    range(len(self.predefined_controllers)), 
+                    weights=probabilities, 
+                    k=1
+                )[0]
+            else:
+                controller_index = random.randint(0, len(self.predefined_controllers) - 1)
+            
+            controller = self.predefined_controllers[controller_index]
         
         elif self.controller_selection_mode == "match_task":
             task_type = task_parameters.get("task_type", "")
             
+            if task_type in self.task_type_controller_map and random.random() < 0.7:  # 70% chance to use learned mapping
+                successful_controllers = self.task_type_controller_map[task_type]
+                if successful_controllers:
+                    controller_index = random.choice(successful_controllers)
+                    controller = self.predefined_controllers[controller_index]
+                    return controller_index, controller
+            
             matching_indices = []
-            for i, controller in enumerate(self.predefined_controllers):
-                if task_type.lower() in controller.lower():
+            for i, controller_code in enumerate(self.predefined_controllers):
+                if task_type.lower() in controller_code.lower():
                     matching_indices.append(i)
             
             if matching_indices:
-                controller = self.predefined_controllers[random.choice(matching_indices)]
+                controller_index = random.choice(matching_indices)
             else:
-                controller = random.choice(self.predefined_controllers)
+                controller_index = random.randint(0, len(self.predefined_controllers) - 1)
+            
+            controller = self.predefined_controllers[controller_index]
         
         else:
             raise ValueError(f"Unknown controller selection mode: {self.controller_selection_mode}")
         
-        return controller
+        return controller_index, controller
     
     def _apply_context_to_task(self, task: Dict[str, Any], context: Dict[str, Any]) -> None:
         """
@@ -399,6 +448,81 @@ class MockGR00TN1(GR00TN1Interface):
                 "success_criteria_description": "Robot reaches the goal zone without colliding with obstacles."
             }
         ]
+    
+    def apply_reinforcement_feedback(self,
+                                    task_parameters: Dict[str, Any],
+                                    controller_code: str,
+                                    reward: float,
+                                    context: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Apply reinforcement learning feedback to adjust internal state.
+        
+        This method implements a basic reinforcement learning feedback mechanism
+        that adjusts the internal state of the GR00T N1 model based on rewards
+        received from task execution.
+        
+        Args:
+            task_parameters: Dictionary containing task parameters
+            controller_code: String containing the controller code
+            reward: Numerical reward value from task execution
+            context: Optional dictionary containing additional context information
+        """
+        task_id = task_parameters.get("task_id", "unknown_task")
+        task_type = task_parameters.get("task_type", "unknown_type")
+        
+        self.logger.info(f"Applying RL feedback for task: {task_id}, reward: {reward:.2f}")
+        
+        if not hasattr(self, "_last_selected_controller") or task_id not in self._last_selected_controller:
+            self.logger.warning(f"No controller index found for task {task_id}, cannot apply feedback")
+            return
+        
+        controller_index = self._last_selected_controller[task_id]
+        
+        if controller_index not in self.controller_performance:
+            self.controller_performance[controller_index] = {
+                "total_reward": 0.0,
+                "count": 0,
+                "success_count": 0,
+                "task_types": {}
+            }
+        
+        performance = self.controller_performance[controller_index]
+        performance["total_reward"] += reward
+        performance["count"] += 1
+        
+        if task_type not in performance["task_types"]:
+            performance["task_types"][task_type] = {
+                "total_reward": 0.0,
+                "count": 0,
+                "success_count": 0
+            }
+        
+        task_type_perf = performance["task_types"][task_type]
+        task_type_perf["total_reward"] += reward
+        task_type_perf["count"] += 1
+        
+        if reward > 0:
+            performance["success_count"] += 1
+            task_type_perf["success_count"] += 1
+            
+            if task_type not in self.task_type_controller_map:
+                self.task_type_controller_map[task_type] = []
+            
+            if controller_index not in self.task_type_controller_map[task_type]:
+                self.task_type_controller_map[task_type].append(controller_index)
+        
+        current_weight = self.controller_selection_weights[controller_index]
+        new_weight = max(0.1, current_weight + self.learning_rate * reward)  # Ensure weight doesn't go below 0.1
+        self.controller_selection_weights[controller_index] = new_weight
+        
+        avg_reward = performance["total_reward"] / performance["count"]
+        success_rate = performance["success_count"] / performance["count"]
+        
+        self.logger.info(f"Updated controller {controller_index} performance:")
+        self.logger.info(f"  New weight: {new_weight:.2f} (was {current_weight:.2f})")
+        self.logger.info(f"  Avg reward: {avg_reward:.2f}, Success rate: {success_rate:.2f}")
+        self.logger.info(f"  Task type '{task_type}' success rate: "
+                        f"{task_type_perf['success_count']}/{task_type_perf['count']}")
     
     def _get_default_controllers(self) -> List[str]:
         """

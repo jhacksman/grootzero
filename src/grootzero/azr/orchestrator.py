@@ -16,6 +16,7 @@ from grootzero.config import load_config
 from grootzero.logging import get_logger
 from grootzero.simulation.environment import SimulationEnvironment
 from grootzero.groot_n1.interface import GR00TN1Interface
+from grootzero.azr.rewards import calculate_reward, calculate_normalized_reward
 
 
 class AZRLearningLoop:
@@ -116,6 +117,7 @@ class AZRLearningLoop:
         3. Simulation execution
         4. Result collection
         5. Result processing
+        6. Reinforcement learning feedback
         
         Returns:
             Dictionary containing the episode results:
@@ -123,6 +125,7 @@ class AZRLearningLoop:
                 - controller_code: Controller code for the episode
                 - execution_results: Results from executing the controller
                 - evaluation_results: Results from evaluating the controller
+                - reward: Calculated reward value for reinforcement learning
         """
         self.logger.info(f"Running episode {self.episode_count + 1}/{self.max_episodes}")
         
@@ -145,18 +148,31 @@ class AZRLearningLoop:
         )
         self.logger.info(f"Evaluation results: score={evaluation_results.get('score', 0.0)}")
         
+        # Calculate reward for reinforcement learning feedback
+        self.logger.info("Calculating reward for reinforcement learning")
+        reward = calculate_reward(execution_results, task_parameters)
+        self.logger.info(f"Calculated reward: {reward:.2f}")
+        
+        self.logger.info("Applying reinforcement learning feedback")
+        self.gr00t_n1.apply_reinforcement_feedback(
+            task_parameters, 
+            controller_code, 
+            reward,
+            context=self.current_context
+        )
+        
         self.logger.info("Updating learning state")
         self.gr00t_n1.update_learning(task_parameters, controller_code, evaluation_results)
         
-        self._update_learning_history(task_parameters, evaluation_results)
-        
+        self._update_learning_history(task_parameters, evaluation_results, reward)
         self.episode_count += 1
         
         return {
             "task_parameters": task_parameters,
             "controller_code": controller_code,
             "execution_results": execution_results,
-            "evaluation_results": evaluation_results
+            "evaluation_results": evaluation_results,
+            "reward": reward
         }
     
     def run(self, num_episodes: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -417,7 +433,8 @@ class AZRLearningLoop:
     def _update_learning_history(
         self,
         task_parameters: Dict[str, Any],
-        evaluation_results: Dict[str, Any]
+        evaluation_results: Dict[str, Any],
+        reward: Optional[float] = None
     ) -> None:
         """
         Update the learning history with the results of an episode.
@@ -425,6 +442,7 @@ class AZRLearningLoop:
         Args:
             task_parameters: Task parameters for the episode
             evaluation_results: Results from evaluating the controller
+            reward: Optional reward value from reinforcement learning
         """
         learning_event = {
             "task_id": task_parameters["task_id"],
@@ -433,6 +451,9 @@ class AZRLearningLoop:
             "score": evaluation_results.get("score", 0.0),
             "timestamp": str(int(time.time()))
         }
+        
+        if reward is not None:
+            learning_event["reward"] = reward
         
         self.learning_history.append(learning_event)
         

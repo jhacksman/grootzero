@@ -6,7 +6,7 @@ foundation model for task proposal and controller synthesis.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 
 
 class GR00TN1Interface(ABC):
@@ -89,5 +89,26 @@ class GR00TN1Interface(ABC):
             task_parameters: Dictionary containing task parameters
             controller_code: String containing the controller code
             evaluation_results: Dictionary containing evaluation results
+        """
+        pass
+    
+    @abstractmethod
+    def apply_reinforcement_feedback(self,
+                                    task_parameters: Dict[str, Any],
+                                    controller_code: str,
+                                    reward: float,
+                                    context: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Apply reinforcement learning feedback to adjust internal state.
+        
+        This method implements a basic reinforcement learning feedback mechanism
+        that adjusts the internal state of the GR00T N1 model based on rewards
+        received from task execution.
+        
+        Args:
+            task_parameters: Dictionary containing task parameters
+            controller_code: String containing the controller code
+            reward: Numerical reward value from task execution
+            context: Optional dictionary containing additional context information
         """
         pass
